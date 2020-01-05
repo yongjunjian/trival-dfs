@@ -1,0 +1,25 @@
+data_path = "data"
+log_path = "log" 
+node_id = 0
+
+[http]
+ip = "127.0.0.1" 
+port = 8080 
+read_timeout = 5
+write_timeout = 5
+
+[rpc]
+etcd_registry = "127.0.0.1:2379"
+ip = "127.0.0.1" 
+port = 18080
+#所有的服务列表，包括自己
+service_list = "127.0.0.1:18070,127.0.0.1:18080,127.0.0.1:18090"
+sync_period = 30
+
+[storage]
+#单个目录下文件块的最大值
+max_block_num_per_dir = 1024
+#每个文件块的最大值(单位M)
+max_block_size = 2048
+#最大的磁盘用量(单位M)
+max_disk_usage = 1024000
