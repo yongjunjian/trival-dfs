@@ -1,13 +1,15 @@
 package types
+import (
+	"os"
+)
 type StoreArgs struct{
     GroupId int 
     FileName string
+    Timestamp int64
     FileData []byte
 }
 
 type StoreReply struct{
-    Code int
-    Message string
     Id string
 }
 
@@ -45,10 +47,9 @@ type Block struct{
     ID int
     Size int
     FileNum int
+    Handle *os.File
 }
 type StatReply struct{
-    Code int
-    Message string
     Statistic StatInfo
 }
 
@@ -58,7 +59,5 @@ type SyncArgs struct{
 }
 
 type SyncReply struct{
-    Code int
-    Message string
 }
 

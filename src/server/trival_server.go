@@ -46,10 +46,10 @@ func ServeHTTP(){
 		ReadTimeout:time.Duration(Config().Http.ReadTimeout) * time.Second,
 		WriteTimeout:time.Duration(Config().Http.WriteTimeout) * time.Second,
 	}
+        
+    log.Printf("start http service, listen on:%s", addr)
 	err := srv.ListenAndServe()
     if err != nil {
         log.Fatal("start http service failed",err)
-    }else{
-        log.Printf("start http service success, listen on:%s", addr)
     }
 }

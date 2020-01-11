@@ -5,6 +5,7 @@ import (
     . "trival/service"
     . "trival/utils"
     "os"
+//    "log"
     "flag"
     "fmt"
     "os/signal"

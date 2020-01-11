@@ -26,6 +26,7 @@ type StorageInfo struct{
     MaxBlockNum int `toml:"max_block_num"`
     MaxBlockSize int `toml:"max_block_size"`
     MaxDiskUsage int `toml:"max_disk_usage"`
+    AdjustInterval uint `toml:"adjust_thread_interval"`
 }
 
 

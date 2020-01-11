@@ -6,6 +6,7 @@ import (
     "github.com/BurntSushi/toml"
 	"os"
     "flag"
+//    "fmt"
     . "trival/types"
 )
 //exported
