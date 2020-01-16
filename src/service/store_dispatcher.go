@@ -4,14 +4,15 @@ import(
     . "trival/types"
     "container/list"
     "time"
-	"fmt"
-	"io/ioutil"
+//	"fmt"
+//	"io/ioutil"
     "log"
     "errors"
-	"strconv"
-	"os"
-	"strings"
+//	"strconv"
+//	"os"
+//	"strings"
     . "trival/utils"
+    "sync"
 )
 
 const (
@@ -32,93 +33,42 @@ type StoreReq struct{
 type StoreDispatcher struct{
     stopped bool
     input chan  StoreReq
-    output map[PartitionLabel](chan StoreReq)
-    //空闲分块表
-    freeBlock map[PartitionLabel](chan *Block)
-    storeWorker map[PartitionLabel](list.List)
+    output map[GroupID](map[PartiID] chan StoreReq)
+    mapLock sync.Mutex
+    storeWorkers map[GroupID](map[PartiID] *list.List)
+
 }
 
 func NewStoreDispatcher() *StoreDispatcher{
     //StoreDispatcher必须以单例模式运行
     if dispatcher == nil {
-        input := make(chan StoreReq, INPUT_QUEUE_LENGTH)
-        dispatcher = &StoreDispatcher{input:input}
+        dispatcher = &StoreDispatcher{
+            input: make(chan StoreReq, INPUT_QUEUE_LENGTH),
+            output: make(map[GroupID](map[PartiID] chan StoreReq )),
+            mapLock: sync.Mutex{},
+            storeWorkers: make(map[GroupID](map[PartiID] *list.List)),
+        }
     }
     return dispatcher
-}
-
-func (this *StoreDispatcher) initFreeBlock() error{
-    //TODO
-    return nil
-}
-
-func (this *StoreDispatcher) GetFreeBlock(groupId GroupId, partition PartitionLabel) (*Block, error){
-    getMaxId := func(path string) (int, error){
-		max := 0
-        files, err := ioutil.ReadDir(path)
-		if err != nil {
-			log.Printf("directory not existed:%s", path)
-			return -1, err
-		}
-    	for _, file := range files {
-			if strings.HasSuffix(file.Name(), BLOCK_FILE_EXT){
-				idStr := strings.TrimSuffix(file.Name(), BLOCK_FILE_EXT)
-			   	id, err := strconv.Atoi(idStr)
-				if err != nil {
-					log.Printf("illeagal block file with bad name:%s/%s", path, file.Name())
-				}else{
-					if (id > max){
-						max = id
-					}
-				}
-			}
-		}
-		return max, nil
-    }
-
-    createBlock := func(partition PartitionLabel, groupId GroupId) (*Block, error){
-        partitionPath := fmt.Sprintf("%s/%d/%s", Config().DataPath, groupId, partition)
-        maxBlockId, err := getMaxId(partitionPath)
-		if err != nil{
-			log.Printf("get max id failed, path=%s", partitionPath)	
-			return nil, err
-		}
-		blockId := maxBlockId+1
-        blockPath := fmt.Sprintf("%s/%d.blk", partitionPath, blockId)
-		handle, err := os.Create(blockPath)
-        if  err != nil{
-           log.Printf("create block file failed,path=%s, error=%v", 
-                        blockPath, err)
-           return nil, err 
-        }
-        return &Block{
-                    ID: blockId,
-                    Size: 0,
-                    FileNum: 0,
-                    Handle: handle, 
-                  },nil
-    }
-
- 
-    key := (PartitionLabel)(fmt.Sprintf("%d_%s", groupId, partition))
-    select{
-        case block := <- this.freeBlock[key]:
-            return block, nil
-        case <- time.After(DEFAULT_SELECT_TIMEOUT * time.Second ):
-            if block, err:= createBlock( partition, groupId ); err != nil {
-               return block, nil
-            }else{
-                return nil,err
-            }
-    }
 }
 
 
 func (this *StoreDispatcher) splitThread() error{
     split := func( req StoreReq ){
+        groupId := req.args.GroupId
         timestamp := req.args.Timestamp
-        partition := (PartitionLabel)(time.Unix(timestamp, 0).Format("20060102"))
-        this.output[partition]  <- req
+        partiId := (PartiID)(time.Unix(timestamp, 0).Format("20060102"))
+        if _, existed :=  this.output[groupId]; !existed{
+            this.mapLock.Lock()
+            this.output[groupId] = make(map[PartiID] chan StoreReq)
+            this.mapLock.Unlock()
+        }
+        if _, existed :=  this.output[groupId][partiId]; !existed{
+            this.mapLock.Lock()
+            this.output[groupId][partiId] = make(chan StoreReq, OUTPUT_QUEUE_LENGTH) 
+            this.mapLock.Lock()
+        }
+        this.output[groupId][partiId]  <- req
     }
     for{
         select {
@@ -135,10 +85,6 @@ func (this *StoreDispatcher) splitThread() error{
 }
 
 func (this *StoreDispatcher) Start() error{
-    if err := this.initFreeBlock(); err != nil{
-        log.Printf("init free block failed!")
-        return  err;
-    }
     go this.splitThread()
     go this.adjustThread()
     return nil
@@ -156,17 +102,83 @@ func (this *StoreDispatcher) AddReq(args *StoreArgs,
     if this.stopped {
         return errors.New("dispatcher is stopped")
     } 
-    this.input <-  StoreReq{args:args,reply:reply}
+    this.input <-  StoreReq{args:args, reply:reply}
     return nil 
 }
 
 func (this *StoreDispatcher) adjustThread(){
+	noticeAllExit := func(groupId GroupID, partiId PartiID){
+        if  _, existed := this.storeWorkers[groupId];  !existed{
+            return
+        }
+        if  _, existed := this.storeWorkers[groupId][partiId]; !existed{
+            return
+        }
+        queue := this.storeWorkers[groupId][partiId]
+        for elem := queue.Front(); elem != nil; elem = elem.Next(){
+           elem.Value.(*StoreWorker).Stop()
+		}
+	}
     adjust := func(){
-        //TODO
+        //统计每个分区请求队列长度
+		//根据队列长度比例，计算每个分区应该拥有的线程数
+		//统计每个分区中存活的线程数，顺带清理map中已退出的线程
+		total := 0
+		queueLen := make(map[GroupID](map[PartiID] int))
+        for groupId, queueMap := range this.output{
+            for partiId, queue := range queueMap{
+			    queueLen[groupId][partiId] = len(queue)
+		 	    total += queueLen[groupId][partiId] 
+		    }
+        }
+        threadNumTotal := Config().Storage.ThreadNum
+        for groupId, lengthMap := range queueLen{
+            for partiId, length := range lengthMap{
+    			if length == 0 {
+                    noticeAllExit(groupId, partiId)
+                    if _, existed := this.storeWorkers[groupId]; existed{
+                        if _, existed := this.storeWorkers[groupId][partiId]; existed{
+                            delete(this.storeWorkers[groupId], partiId)
+                        }
+                    }
+
+                    this.mapLock.Lock()
+				    delete(this.output[groupId], partiId)
+                    this.mapLock.Unlock()
+                    continue
+			    }
+
+                threadNum := threadNumTotal*length/total
+                if threadNum == 0{
+                    threadNum = 1 //要保证至少有一个线程在处理分片
+                }
+                if _, existed := this.storeWorkers[groupId]; !existed{
+                    this.storeWorkers[groupId] = make(map[PartiID] *list.List)
+                }
+                if _, existed := this.storeWorkers[groupId][partiId]; !existed {
+                    this.storeWorkers[groupId][partiId] = list.New().Init()
+                }
+                swList := this.storeWorkers[groupId][partiId]
+                for swList.Len() < threadNum {
+                    sw := NewStoreWorker(
+                        this.output[groupId][partiId],
+                        groupId, 
+                        partiId)
+                    sw.Start()
+                    swList.PushFront(sw);
+                }
+                for swList.Len() > threadNum {
+                    elem := swList.Front() 
+                    elem.Value.(*StoreWorker).Stop()
+                    swList.Remove(elem)
+
+                }
+            } 
+        }
     }
-    var interval = time.Duration(Config().Storage.AdjustInterval) * time.Second
-    for{
-        select{
+    interval := time.Duration(Config().Storage.AdjustInterval) * time.Second
+    for {
+        select {
             case <- time.After( interval):
                 if this.stopped {
                     break

@@ -27,7 +27,7 @@ func main(){
                         PROGRAM_VERSION, DATABASE_VERSION);
         return
     }
-	InitLog(Config().LogPath)
+	InitLog(Config().Log.Path)
     go ServeRPC()
     go ServeHTTP()
 	signal.Notify(signals, os.Interrupt)

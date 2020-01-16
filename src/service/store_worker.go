@@ -3,11 +3,12 @@ package service
 import (
 	//    . "trival/utils"
 	. "trival/types"
+    "log"
 )
 
-func InitFreeBolck() error {
-	return nil
-}
+var (
+    blockManager = NewBlockManager()
+)
 
 type StoreWorker struct {
 	//退出信号
@@ -15,32 +16,54 @@ type StoreWorker struct {
 	//当前在处理的对列
 	reqQueue chan StoreReq
 	//当前所在的分组
-	groupId GroupId
+	groupId GroupID
 	//当前所在的分区
-	partition PartitionLabel
+	partiId PartiID
+	//当前所在的块
+	block Block
+
 }
 
 func NewStoreWorker(reqQueue chan StoreReq,
-					groupId GroupId, 
-					partition PartitionLabel) *StoreWorker {
+					groupId GroupID, 
+					partiId PartiID) *StoreWorker {
 	return &StoreWorker{
 		reqQueue: reqQueue,
 		groupId: groupId,
-		partition: partition,
+		partiId: partiId,
 	}
 }
 
-func (this *StoreWorker) Run() {
-	//检查是否转移分区的时间间隔
-	var req StoreReq
-	for {
-		select {
-		case <-this.exit:
-			break
-		case req = <-this.reqQueue:
-			this.storeFile(req)
-		}
+func (this *StoreWorker) Stop(){
+	this.exit <- true
+}
+
+func (this *StoreWorker) Start() error{
+	block, err := blockManager.GetFreeBlock(
+							this.groupId, 
+							this.partiId)
+	if err != nil {
+		log.Printf("get free block failed:%v", err)
+		return err
 	}
+    log.Printf("get free block:%d", block.ID)	
+	//检查是否转移分区的时间间隔
+	go func(){
+		var req StoreReq
+		for {
+			select {
+			case <-this.exit:
+				block.Handle.Sync()
+				break
+			case req = <-this.reqQueue:
+				this.storeFile(req)
+			}
+		}
+		log.Printf("store worker exit, group:%d, partition:%s, block:%d",
+				this.groupId, this.partiId, block.ID)
+		blockManager.AddFreeBlock(this.groupId, this.partiId, block)
+	}()
+	return nil
 }
 
 func (this *StoreWorker) storeFile(req StoreReq) error {

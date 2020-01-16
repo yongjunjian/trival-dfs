@@ -48,7 +48,7 @@ func (this *Service) Store(ctx context.Context,
 	}
 }
 
-func (this *Service) localStore(groupId int,
+func (this *Service) localStore(groupId GroupID,
 	fileName string,
 	timestamp int64,
 	fileData []byte) (error, string) {

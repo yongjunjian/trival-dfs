@@ -1,5 +1,5 @@
 package types
 
-type PartitionLabel string
-type BlockId uint16
-type GroupId uint16
+type PartiID string
+type BlockID uint16
+type GroupID uint16

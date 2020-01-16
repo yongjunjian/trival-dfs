@@ -3,7 +3,7 @@ import (
 	"os"
 )
 type StoreArgs struct{
-    GroupId int 
+    GroupId GroupID
     FileName string
     Timestamp int64
     FileData []byte
@@ -14,8 +14,8 @@ type StoreReply struct{
 }
 
 type RetrieveArgs struct{
-    GroupId int 
-    Partition string
+    GroupId GroupID
+    PartiId PartiID 
     BlockId int
     Offset  int64
 }
@@ -36,16 +36,16 @@ type StatInfo struct{
     DiskLimited int
 }
 type Group struct{
-    PartitionList []Partition
+    PartiList []Parti
 }
-type Partition struct{
+type Parti struct{
     Date string
     LimitedBlockNum int
     BlockList []Block
 }
 type Block struct{
     ID int
-    Size int
+    Size int64
     FileNum int
     Handle *os.File
 }
