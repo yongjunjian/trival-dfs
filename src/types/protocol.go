@@ -11,12 +11,13 @@ type StoreArgs struct{
 
 type StoreReply struct{
     Id string
+    Err error
 }
 
 type RetrieveArgs struct{
     GroupId GroupID
     PartiId PartiID 
-    BlockId int
+    BlockId BlockID
     Offset  int64
 }
 
@@ -44,7 +45,7 @@ type Parti struct{
     BlockList []Block
 }
 type Block struct{
-    ID int
+    Id BlockID
     Size int64
     FileNum int
     Handle *os.File
@@ -61,3 +62,8 @@ type SyncArgs struct{
 type SyncReply struct{
 }
 
+type StoreReq struct{
+   Args *StoreArgs
+   Canceled *bool
+   Done chan *StoreReply
+}

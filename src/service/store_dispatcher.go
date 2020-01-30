@@ -4,13 +4,8 @@ import(
     . "trival/types"
     "container/list"
     "time"
-//	"fmt"
-//	"io/ioutil"
     "log"
     "errors"
-//	"strconv"
-//	"os"
-//	"strings"
     . "trival/utils"
     "sync"
 )
@@ -22,18 +17,16 @@ const (
    OUTPUT_QUEUE_LENGTH = 1024
    BLOCK_FILE_EXT = ".blk"
 )
+
 var (
     dispatcher *StoreDispatcher
 )
-type StoreReq struct{
-   args *StoreArgs
-   reply *StoreReply
-}
+
 
 type StoreDispatcher struct{
     stopped bool
-    input chan  StoreReq
-    output map[GroupID](map[PartiID] chan StoreReq)
+    input chan  *StoreReq
+    output map[GroupID](map[PartiID] chan *StoreReq)
     mapLock sync.Mutex
     storeWorkers map[GroupID](map[PartiID] *list.List)
 
@@ -43,8 +36,8 @@ func NewStoreDispatcher() *StoreDispatcher{
     //StoreDispatcher必须以单例模式运行
     if dispatcher == nil {
         dispatcher = &StoreDispatcher{
-            input: make(chan StoreReq, INPUT_QUEUE_LENGTH),
-            output: make(map[GroupID](map[PartiID] chan StoreReq )),
+            input: make(chan *StoreReq, INPUT_QUEUE_LENGTH),
+            output: make(map[GroupID](map[PartiID] chan *StoreReq )),
             mapLock: sync.Mutex{},
             storeWorkers: make(map[GroupID](map[PartiID] *list.List)),
         }
@@ -52,21 +45,24 @@ func NewStoreDispatcher() *StoreDispatcher{
     return dispatcher
 }
 
+func (this *StoreDispatcher) getPartiId(timestamp int64) PartiId{
+    timestamp := req.Args.Timestamp
+    return (PartiID)(time.Unix(timestamp, 0).Format("20060102"))
+ }
 
 func (this *StoreDispatcher) splitThread() error{
-    split := func( req StoreReq ){
-        groupId := req.args.GroupId
-        timestamp := req.args.Timestamp
-        partiId := (PartiID)(time.Unix(timestamp, 0).Format("20060102"))
-        if _, existed :=  this.output[groupId]; !existed{
+    split := func( req *StoreReq ){
+        groupId := req.Args.GroupId
+           if _, existed :=  this.output[groupId]; !existed{
             this.mapLock.Lock()
-            this.output[groupId] = make(map[PartiID] chan StoreReq)
+            this.output[groupId] = make(map[PartiID] chan *StoreReq)
             this.mapLock.Unlock()
         }
+        partiId := getPartiId(req.Args.Timestamp)
         if _, existed :=  this.output[groupId][partiId]; !existed{
             this.mapLock.Lock()
-            this.output[groupId][partiId] = make(chan StoreReq, OUTPUT_QUEUE_LENGTH) 
-            this.mapLock.Lock()
+            this.output[groupId][partiId] = make(chan *StoreReq, OUTPUT_QUEUE_LENGTH) 
+            this.mapLock.UnLock()
         }
         this.output[groupId][partiId]  <- req
     }
@@ -87,23 +83,62 @@ func (this *StoreDispatcher) splitThread() error{
 func (this *StoreDispatcher) Start() error{
     go this.splitThread()
     go this.adjustThread()
+    this.stopped = false
     return nil
 }
 
 func (this *StoreDispatcher) Stop(){
-   this.stopped = false
-   //TODO;等待所有请求处理完,即各分区的请求对列为空
-   //TODO:通知所有storeWorker退出
+   this.stopped = true
+}
+
+func (this *StoreDispatcher) initWorkerIfNotExist(groupId GroupID, partiId PartiID) bool{
+    executed =  false
+    if _, existed := this.storeWorkers[groupId]; !existed{
+        this.workerLock.Lock()
+        this.storeWorkers[groupId] = make(map[PartiID] *list.List)
+        this.workerLock.UnLock()
+        executed = true
+    }
+    if _, existed := this.storeWorkers[groupId][partiId]; !existed {
+        this.workerLock.Lock()
+        this.storeWorkers[groupId][partiId] = list.New().Init()
+        this.workerLock.UnLock()
+        executed = true
+    }
+    return executed
+}
+
+func (this *StoreDispatcher) addWorkerIfNotExist(groupId GroupID, partiId PartiID){
+    if this.initWorker(groupId, partiId) {
+        sw := NewStoreWorker(
+            this.output[groupId][partiId],
+            groupId, 
+            partiId)
+        sw.Start()
+        this.workerLock.Lock()
+        this.storeWorkers[groupId][partiId].PushFront(sw)
+        this.workerLock.UnLock()
+    }
 }
 
 //注意该接口会多线程调用，必须保证线程安全
-func (this *StoreDispatcher) AddReq(args *StoreArgs, 
-                                    reply * StoreReply) error{
+func (this *StoreDispatcher) SyncDispatch(args *StoreArgs)* StoreReply {
     if this.stopped {
-        return errors.New("dispatcher is stopped")
+        return &StoreReply{Err: errors.New("store dispatcher is stopped")}
     } 
-    this.input <-  StoreReq{args:args, reply:reply}
-    return nil 
+    done := make(chan *StoreReply)
+    canceled := false
+    this.input <-  &StoreReq{Args:args, Done:done, Canceled: &canceled}
+    this.addWorkerIfNotExist(args.GroupId, getPartiID(args.Timestamp))
+    select{
+            case <- time.After(time.Duration(Config().Storage.Timeout)*time.Second):
+                log.Printf("timeout to store")
+                canceled = true       
+                return &StoreReply{Err: errors.New("timeout to wait for storing")}
+            case reply := <- done:
+                return reply
+    }
+    return nil
 }
 
 func (this *StoreDispatcher) adjustThread(){
@@ -171,7 +206,6 @@ func (this *StoreDispatcher) adjustThread(){
                     elem := swList.Front() 
                     elem.Value.(*StoreWorker).Stop()
                     swList.Remove(elem)
-
                 }
             } 
         }

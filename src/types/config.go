@@ -31,7 +31,8 @@ type StorageInfo struct{
     MaxDiskUsage int `toml:"max_disk_usage"`
     AdjustInterval uint `toml:"adjust_thread_interval"`
 	DataPath string `toml:"data_path"`
-	DataNodeId string	`toml:"data_node_id"`
+	DataNodeId int	`toml:"data_node_id"`
+    Timeout int `toml:"timeout"`
 }
 
 

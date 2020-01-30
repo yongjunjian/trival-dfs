@@ -9,9 +9,16 @@ import (
 	"strconv"
 	"os"
 	"strings"
+    "encoding/binary"
     . "trival/utils"
  
 )
+
+const (
+    MAGIC_NUMBER = "trivalfs"
+    DATABASE_VERSION = 1
+)
+
 type BlockManager struct{
     //空闲分块表
     freeBlock map[GroupID](map[PartiID](chan *Block) )
@@ -76,7 +83,7 @@ func (this *BlockManager) initFreeBlock() error{
                         continue
                     }
                     this.freeBlock[groupId][partiId] <- &Block{
-                        ID: blockId,
+                        Id: BlockID(blockId),
                         Size: file.Size(),
 		    			FileNum: getFileNum(handle),
                         Handle: handle, 
@@ -129,6 +136,19 @@ func (this *BlockManager) GetFreeBlock(groupId GroupID, partiId PartiID) (*Block
 		return max, nil
     }
 
+    writeHeader := func(file * os.File) error{
+        var header BlockHeader
+        if len(MAGIC_NUMBER) != 8 {
+            log.Panicf("magic number length should be 8")
+        }
+        copy(header.MagicNumber[:], ([]byte)(MAGIC_NUMBER))
+        header.Version = DATABASE_VERSION
+        if err := binary.Write(file, binary.LittleEndian, header); err != nil{
+            return err
+        } 
+        return nil
+    }
+
     createBlock := func(groupId GroupID,partition PartiID) (*Block, error){
         partitionPath := fmt.Sprintf("%s/%d/%s", Config().Storage.DataPath, groupId, partition)
         maxBlockId, err := getMaxId(partitionPath)
@@ -144,15 +164,18 @@ func (this *BlockManager) GetFreeBlock(groupId GroupID, partiId PartiID) (*Block
                         blockPath, err)
            return nil, err 
         }
+        if err := writeHeader(handle); err != nil{
+            log.Printf("write header to %s failed:%v", blockPath, err) 
+            return nil, err
+        }
         return &Block{
-                    ID: blockId,
+                    Id: BlockID(blockId),
                     Size: 0,
                     FileNum: 0,
                     Handle: handle, 
                   },nil
     }
 
- 
     select{
         case block := <- this.freeBlock[groupId][partiId]:
             return block, nil

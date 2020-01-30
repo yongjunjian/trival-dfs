@@ -6,6 +6,7 @@ import (
     "github.com/BurntSushi/toml"
 	"os"
     "flag"
+    "encoding/binary"
 //    "fmt"
     . "trival/types"
 )
@@ -54,4 +55,42 @@ func Config() *ConfigInfo{
         }
     }
     return config
+}
+
+func WriteUInt64(file *os.File, v uint64) error{
+    buf := make([]byte, 8)
+    binary.BigEndian.PutUint64(buf, v)
+    if _, err := file.Write(buf); err != nil{
+        log.Panicf("write failed:%v",err)
+        return err
+    }
+    return nil
+}
+func WriteUint32(file *os.File, v uint32) error{
+    buf := make([]byte, 4)
+    binary.BigEndian.PutUint32(buf, v)
+    if _, err := file.Write(buf); err != nil{
+        log.Panicf("write failed:%v",err)
+        return err
+    }
+    return nil
+
+}
+func WriteUint16(file *os.File, v uint16) error{
+    buf := make([]byte, 2)
+    binary.BigEndian.PutUint16(buf, v)
+    if _, err := file.Write(buf); err != nil{
+        log.Panicf("write failed:%v",err)
+        return err
+    }
+    return nil
+}
+func WriteUint8(file *os.File, v uint8) error{
+    buf := make([]byte, 1)
+    buf =append(buf, v)
+    if _, err := file.Write(buf); err != nil{
+        log.Panicf("write failed:%v",err)
+        return err
+    }
+    return nil
 }
